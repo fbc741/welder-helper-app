@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 焊接帽图标 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30c-13.2,0 -24,10.8 -24,24v12h48v-12c0,-13.2 -10.8,-24 -24,-24zM38,60v-6c0,-8.8 7.2,-16 16,-16s16,7.2 16,16v6h-32z" />
+
+    <!-- 护目镜 -->
+    <path
+        android:fillColor="#FFC107"
+        android:pathData="M36,60c0,-10 8,-18 18,-18s18,8 18,18v8h-36v-8z" />
+
+</vector>
