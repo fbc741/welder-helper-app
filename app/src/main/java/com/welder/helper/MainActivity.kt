@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.SeekBar
 import android.widget.TextView
@@ -23,7 +24,9 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        const val TAG = "WelderHelper"
         const val PERMISSION_REQUEST_CODE = 1001
+        const val OVERLAY_REQUEST_CODE = 1002
     }
 
     private lateinit var tvPermissionStatus: TextView
@@ -60,6 +63,7 @@ class MainActivity : AppCompatActivity() {
 
         // 启动悬浮窗
         btnStart.setOnClickListener {
+            Log.d(TAG, "启动按钮点击")
             if (checkAllPermissions()) {
                 startFloatingService()
             } else {
@@ -74,7 +78,6 @@ class MainActivity : AppCompatActivity() {
 
         // 导入题库
         btnImport.setOnClickListener {
-            // TODO: 实现题库导入功能（从文件或网络）
             Toast.makeText(this, "题库已在APP内置", Toast.LENGTH_SHORT).show()
         }
 
@@ -148,27 +151,27 @@ class MainActivity : AppCompatActivity() {
     private fun requestAllPermissions() {
         // 检查悬浮窗权限
         if (!Settings.canDrawOverlays(this)) {
+            Log.d(TAG, "请求悬浮窗权限")
             AlertDialog.Builder(this)
                 .setTitle("需要悬浮窗权限")
-                .setMessage("请在设置中允许此APP显示在其他应用上层")
+                .setMessage("请在设置中允许此APP显示在其他应用上层\n\n一加手机：设置 → 应用 → 特殊权限 → 悬浮窗")
                 .setPositiveButton("去设置") { _, _ ->
                     val intent = Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:$packageName")
                     )
-                    startActivity(intent)
+                    startActivityForResult(intent, OVERLAY_REQUEST_CODE)
                 }
                 .setNegativeButton("取消", null)
                 .show()
             return
         }
-
-        // 检查屏幕截取权限（启动时会自动请求）
-        updatePermissionStatus()
     }
 
     private fun checkAllPermissions(): Boolean {
-        return Settings.canDrawOverlays(this)
+        val canOverlay = Settings.canDrawOverlays(this)
+        Log.d(TAG, "悬浮窗权限状态: $canOverlay")
+        return canOverlay
     }
 
     private fun updatePermissionStatus() {
@@ -176,8 +179,9 @@ class MainActivity : AppCompatActivity() {
         tvPermissionStatus.text = if (overlay) {
             "✅ 悬浮窗权限已开启"
         } else {
-            "❌ 悬浮窗权限未开启"
+            "❌ 悬浮窗权限未开启（点击启动会提示开启）"
         }
+        Log.d(TAG, "权限状态更新: overlay=$overlay")
     }
 
     private fun updateQuestionCount() {
@@ -188,16 +192,34 @@ class MainActivity : AppCompatActivity() {
     // ==================== 服务控制 ====================
 
     private fun startFloatingService() {
-        val intent = Intent(this, FloatingService::class.java).apply {
-            action = FloatingService.ACTION_START
+        Log.d(TAG, "启动悬浮窗服务")
+
+        // 再次检查权限
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请先开启悬浮窗权限", Toast.LENGTH_LONG).show()
+            requestAllPermissions()
+            return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+
+        try {
+            val intent = Intent(this, FloatingService::class.java).apply {
+                action = FloatingService.ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            Toast.makeText(this, "悬浮窗已启动，请返回桌面查看", Toast.LENGTH_LONG).show()
+
+            // 延迟关闭，让用户看到提示
+            btnStart.postDelayed({
+                finish()
+            }, 1500)
+        } catch (e: Exception) {
+            Log.e(TAG, "启动服务失败", e)
+            Toast.makeText(this, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
         }
-        Toast.makeText(this, "悬浮窗已启动", Toast.LENGTH_SHORT).show()
-        finish()  // 关闭主界面，让APP在后台运行
     }
 
     private fun stopFloatingService() {
@@ -213,5 +235,16 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updatePermissionStatus()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == OVERLAY_REQUEST_CODE) {
+            // 从设置返回，检查权限
+            updatePermissionStatus()
+            if (Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "权限已开启，现在可以启动悬浮窗", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }
