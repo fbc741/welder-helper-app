@@ -4,88 +4,68 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * 极简测试界面
+ * 极简测试界面 - 不自动触发截屏，只测试悬浮球
  */
 class TestActivity : AppCompatActivity() {
 
+    companion object {
+        private const val TAG = "TestActivity"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_test)
 
-        // 直接用代码创建界面，不用XML
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(50, 50, 50, 50)
-        }
+        val tvStatus = findViewById<TextView>(R.id.tvTestStatus)
+        val btnShow = findViewById<Button>(R.id.btnShowBall)
+        val btnHide = findViewById<Button>(R.id.btnHideBall)
 
-        val title = android.widget.TextView(this).apply {
-            text = "悬浮球测试"
-            textSize = 24f
-            setPadding(0, 0, 0, 50)
-        }
-        layout.addView(title)
+        updateStatus(tvStatus)
 
-        val status = android.widget.TextView(this).apply {
-            text = if (Settings.canDrawOverlays(this@TestActivity))
-                "✅ 悬浮窗权限: 已开启" else "❌ 悬浮窗权限: 未开启"
-            textSize = 16f
-            setPadding(0, 0, 0, 30)
-        }
-        layout.addView(status)
+        btnShow.setOnClickListener {
+            if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "请先到设置中开启悬浮窗权限", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
 
-        // 测试按钮
-        val btnTest = Button(this).apply {
-            text = "显示测试悬浮球"
-            setOnClickListener {
-                if (!Settings.canDrawOverlays(this@TestActivity)) {
-                    Toast.makeText(this@TestActivity, "请先开启悬浮窗权限", Toast.LENGTH_LONG).show()
-                    // 跳转到权限设置
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        android.net.Uri.parse("package:$packageName")
-                    )
-                    startActivity(intent)
-                    return@setOnClickListener
-                }
-
-                // 启动极简悬浮球服务
-                val serviceIntent = Intent(this@TestActivity, SimpleFloatingService::class.java).apply {
-                    action = SimpleFloatingService.ACTION_START
-                }
+            try {
+                val intent = Intent(this, SimpleFloatingService::class.java)
+                intent.action = SimpleFloatingService.ACTION_SHOW
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
+                    startForegroundService(intent)
                 } else {
-                    startService(serviceIntent)
+                    startService(intent)
                 }
-
-                Toast.makeText(this@TestActivity, "服务已启动，请返回桌面查看", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "悬浮球已启动，请看屏幕左上角", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.e(TAG, "启动失败", e)
+                Toast.makeText(this, "启动失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
-        layout.addView(btnTest)
 
-        // 停止按钮
-        val btnStop = Button(this).apply {
-            text = "停止悬浮球"
-            setOnClickListener {
-                val serviceIntent = Intent(this@TestActivity, SimpleFloatingService::class.java).apply {
-                    action = SimpleFloatingService.ACTION_STOP
-                }
-                startService(serviceIntent)
-                Toast.makeText(this@TestActivity, "已停止", Toast.LENGTH_SHORT).show()
-            }
+        btnHide.setOnClickListener {
+            val intent = Intent(this, SimpleFloatingService::class.java)
+            intent.action = SimpleFloatingService.ACTION_HIDE
+            startService(intent)
+            Toast.makeText(this, "已停止", Toast.LENGTH_SHORT).show()
         }
-        layout.addView(btnStop)
-
-        setContentView(layout)
     }
 
     override fun onResume() {
         super.onResume()
-        // 刷新权限状态
-        recreate() // 简单粗暴，重新创建界面刷新状态
+        findViewById<TextView>(R.id.tvTestStatus)?.let { updateStatus(it) }
+    }
+
+    private fun updateStatus(tv: TextView) {
+        val hasPerm = Settings.canDrawOverlays(this)
+        tv.text = if (hasPerm) "✅ 悬浮窗权限已开启\n\n点「显示悬浮球」然后看屏幕左上角"
+                  else "❌ 悬浮窗权限未开启\n请到设置中开启"
     }
 }
