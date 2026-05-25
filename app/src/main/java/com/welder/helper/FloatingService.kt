@@ -1,6 +1,7 @@
 package com.welder.helper
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,8 +17,9 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
-import android.app.Activity
+import android.provider.Settings
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.*
 import android.widget.*
 import androidx.core.app.NotificationCompat
@@ -33,6 +35,7 @@ import kotlinx.coroutines.*
 class FloatingService : Service() {
 
     companion object {
+        const val TAG = "FloatingService"
         const val CHANNEL_ID = "welder_floating"
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.welder.helper.START"
@@ -82,20 +85,29 @@ class FloatingService : Service() {
 
         // 获取屏幕尺寸
         val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getMetrics(metrics)
         screenWidth = metrics.widthPixels
         screenHeight = metrics.heightPixels
         screenDensity = metrics.densityDpi
 
+        Log.d(TAG, "服务创建 - 屏幕尺寸: ${screenWidth}x${screenHeight}")
+
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand: action=${intent?.action}")
+
         when (intent?.action) {
             ACTION_START -> {
                 startForeground(NOTIFICATION_ID, createNotification())
-                initScreenCapture()
                 showFloatingBall()
+                // 稍后再初始化截屏，避免阻塞
+                serviceScope.launch {
+                    delay(500)
+                    initScreenCapture()
+                }
             }
             ACTION_STOP -> {
                 stopSelf()
@@ -106,6 +118,7 @@ class FloatingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "服务销毁")
         instance = null
         serviceScope.cancel()
         removeFloatingBall()
@@ -118,18 +131,39 @@ class FloatingService : Service() {
 
     @SuppressLint("WrongConstant")
     private fun initScreenCapture() {
-        // 请求截屏权限
-        val intent = Intent(this, ScreenCaptureActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(intent)
+        Log.d(TAG, "初始化屏幕截取")
 
-        onScreenCaptureReady = { resultCode, data ->
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                val projectionManager =
-                    getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                mediaProjection = projectionManager.getMediaProjection(resultCode, data)
-                setupImageReader()
+        // 检查悬浮窗权限
+        if (!Settings.canDrawOverlays(this)) {
+            Log.e(TAG, "悬浮窗权限未开启")
+            showToast("悬浮窗权限未开启，请在设置中开启")
+            return
+        }
+
+        // 请求截屏权限
+        try {
+            val intent = Intent(this, ScreenCaptureActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+
+            onScreenCaptureReady = { resultCode, data ->
+                Log.d(TAG, "截屏权限结果: resultCode=$resultCode")
+                if (resultCode == Activity.RESULT_OK && data != null) {
+                    try {
+                        val projectionManager =
+                            getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+                        setupImageReader()
+                        Log.d(TAG, "屏幕截取初始化成功")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "初始化截屏失败", e)
+                    }
+                } else {
+                    Log.w(TAG, "截屏权限被拒绝")
+                }
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "启动截屏Activity失败", e)
         }
     }
 
@@ -164,6 +198,9 @@ class FloatingService : Service() {
             )
             bitmap.copyPixelsFromBuffer(buffer)
             return bitmap
+        } catch (e: Exception) {
+            Log.e(TAG, "截屏失败", e)
+            return null
         } finally {
             image.close()
         }
@@ -179,66 +216,84 @@ class FloatingService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun showFloatingBall() {
-        if (floatingBall != null) return
-
-        val inflater = LayoutInflater.from(this)
-        floatingBall = inflater.inflate(R.layout.floating_ball, null)
-
-        val params = WindowManager.LayoutParams(
-            dp2px(ballSize),
-            dp2px(ballSize),
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 0
-            y = screenHeight / 3
+        if (floatingBall != null) {
+            Log.d(TAG, "悬浮球已存在")
+            return
         }
 
-        // 拖拽逻辑
-        var initialX = 0
-        var initialY = 0
-        var initialTouchX = 0f
-        var initialTouchY = 0f
-        var isDragging = false
+        Log.d(TAG, "创建悬浮球")
 
-        floatingBall?.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    initialX = params.x
-                    initialY = params.y
-                    initialTouchX = event.rawX
-                    initialTouchY = event.rawY
-                    isDragging = false
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - initialTouchX
-                    val dy = event.rawY - initialTouchY
-                    if (dx * dx + dy * dy > 25) {
-                        isDragging = true
-                    }
-                    params.x = initialX + dx.toInt()
-                    params.y = initialY + dy.toInt()
-                    windowManager.updateViewLayout(floatingBall, params)
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
-                        onFloatingBallClick()
-                    } else {
-                        // 边缘吸附
-                        snapToEdge(params)
-                    }
-                    true
-                }
-                else -> false
+        // 再次检查权限
+        if (!Settings.canDrawOverlays(this)) {
+            Log.e(TAG, "showFloatingBall: 悬浮窗权限未开启")
+            showToast("悬浮窗权限未开启")
+            return
+        }
+
+        try {
+            val inflater = LayoutInflater.from(this)
+            floatingBall = inflater.inflate(R.layout.floating_ball, null)
+
+            val params = WindowManager.LayoutParams(
+                dp2px(ballSize),
+                dp2px(ballSize),
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = screenHeight / 3
             }
-        }
 
-        floatingBall?.alpha = ballAlpha
-        windowManager.addView(floatingBall, params)
+            // 拖拽逻辑
+            var initialX = 0
+            var initialY = 0
+            var initialTouchX = 0f
+            var initialTouchY = 0f
+            var isDragging = false
+
+            floatingBall?.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        isDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - initialTouchX
+                        val dy = event.rawY - initialTouchY
+                        if (dx * dx + dy * dy > 25) {
+                            isDragging = true
+                        }
+                        params.x = initialX + dx.toInt()
+                        params.y = initialY + dy.toInt()
+                        windowManager.updateViewLayout(floatingBall, params)
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!isDragging) {
+                            onFloatingBallClick()
+                        } else {
+                            snapToEdge(params)
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            floatingBall?.alpha = ballAlpha
+            windowManager.addView(floatingBall, params)
+            Log.d(TAG, "悬浮球添加成功")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "创建悬浮球失败", e)
+            showToast("创建悬浮窗失败: ${e.message}")
+        }
     }
 
     private fun snapToEdge(params: WindowManager.LayoutParams) {
@@ -265,7 +320,7 @@ class FloatingService : Service() {
             try {
                 windowManager.removeView(it)
             } catch (e: Exception) {
-                // ignore
+                Log.e(TAG, "移除悬浮球失败", e)
             }
         }
         floatingBall = null
@@ -321,6 +376,7 @@ class FloatingService : Service() {
                     continuation.resume(visionText.text) {}
                 }
                 .addOnFailureListener { e ->
+                    Log.e(TAG, "OCR识别失败", e)
                     continuation.resume(null) {}
                 }
         }
