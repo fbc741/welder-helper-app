@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="56dp"
+    android:height="56dp"
+    android:viewportWidth="56"
+    android:viewportHeight="56">
+
+    <!-- 背景圆形 -->
+    <path
+        android:fillColor="#2196F3"
+        android:pathData="M28,28m-26,0a26,26 0,1 1,52 0a26,26 0,1 1,-52 0" />
+
+    <!-- 问号图标 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,20c0,-2.2 1.8,-4 4,-4s4,1.8 4,4c0,2.9 -4,3.8 -4,6h-4c0,-3.6 4,-4.8 4,-6c0,-1.1 -0.9,-2 -2,-2s-2,0.9 -2,2h-4zM26,32h4v4h-4z" />
+
+</vector>
