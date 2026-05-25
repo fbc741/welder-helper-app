@@ -16,6 +16,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.app.Activity
 import android.util.DisplayMetrics
 import android.view.*
 import android.widget.*
@@ -123,7 +124,7 @@ class FloatingService : Service() {
         startActivity(intent)
 
         onScreenCaptureReady = { resultCode, data ->
-            if (resultCode == RESULT_OK && data != null) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
                 val projectionManager =
                     getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                 mediaProjection = projectionManager.getMediaProjection(resultCode, data)
