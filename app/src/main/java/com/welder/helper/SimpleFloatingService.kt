@@ -12,43 +12,40 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.*
-import android.widget.Toast
-import androidx.core.app.NotificationCompat
+import android.widget.*
+import kotlinx.coroutines.*
 
-/**
- * 极简悬浮球测试
- */
 class SimpleFloatingService : Service() {
 
     companion object {
-        const val TAG = "SimpleFloat"
-        const val CHANNEL_ID = "simple_float"
-        const val NOTIFICATION_ID = 9999
-        const val ACTION_START = "com.welder.helper.START_SIMPLE"
-        const val ACTION_STOP = "com.welder.helper.STOP_SIMPLE"
+        private const val TAG = "SimpleFloat"
+        private const val CHANNEL_ID = "welder_simple"
+        private const val NOTIFICATION_ID = 2001
+        const val ACTION_SHOW = "com.welder.helper.SHOW"
+        const val ACTION_HIDE = "com.welder.helper.HIDE"
     }
 
     private lateinit var windowManager: WindowManager
-    private var floatingView: View? = null
+    private var floatingBall: View? = null
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         Log.d(TAG, "服务创建")
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand: ${intent?.action}")
-
         when (intent?.action) {
-            ACTION_START -> {
-                createNotificationChannel()
+            ACTION_SHOW -> {
                 startForeground(NOTIFICATION_ID, createNotification())
-                showSimpleBall()
+                showBall()
             }
-            ACTION_STOP -> {
+            ACTION_HIDE -> {
+                hideBall()
                 stopSelf()
             }
         }
@@ -58,78 +55,102 @@ class SimpleFloatingService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "服务销毁")
-        removeBall()
+        serviceScope.cancel()
+        hideBall()
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private fun showSimpleBall() {
-        if (floatingView != null) return
+    private fun showBall() {
+        if (floatingBall != null) {
+            Log.d(TAG, "悬浮球已存在")
+            return
+        }
 
-        Log.d(TAG, "显示悬浮球")
-
-        // 检查权限
         if (!Settings.canDrawOverlays(this)) {
-            Log.e(TAG, "没有悬浮窗权限!")
-            Toast.makeText(this, "错误：没有悬浮窗权限", Toast.LENGTH_LONG).show()
-            stopSelf()
+            Log.e(TAG, "没有悬浮窗权限")
             return
         }
 
         try {
-            // 创建一个简单的红色圆形
-            floatingView = View(this).apply {
-                setBackgroundColor(0xFFFF0000.toInt()) // 红色
+            // 纯代码创建，不依赖XML
+            val ball = ImageView(this).apply {
+                setImageResource(R.drawable.ic_float_ball)
+                scaleType = ImageView.ScaleType.FIT_CENTER
             }
 
+            val sizePx = (56 * resources.displayMetrics.density).toInt()
+
             val params = WindowManager.LayoutParams(
-                150, 150,
+                sizePx, sizePx,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = 100
-                y = 300
+                x = 0
+                y = 500
             }
 
-            windowManager.addView(floatingView, params)
-            Log.d(TAG, "悬浮球添加成功!")
-            Toast.makeText(this, "悬浮球已显示!", Toast.LENGTH_SHORT).show()
+            // 简单拖拽
+            var startX = 0
+            var startY = 0
+            var touchX = 0f
+            var touchY = 0f
+
+            ball.setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startX = params.x
+                        startY = params.y
+                        touchX = event.rawX
+                        touchY = event.rawY
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = startX + (event.rawX - touchX).toInt()
+                        params.y = startY + (event.rawY - touchY).toInt()
+                        windowManager.updateViewLayout(ball, params)
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        Toast.makeText(this, "悬浮球已显示！功能开发中...", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            windowManager.addView(ball, params)
+            floatingBall = ball
+            Log.d(TAG, "悬浮球显示成功")
 
         } catch (e: Exception) {
-            Log.e(TAG, "添加悬浮球失败", e)
-            Toast.makeText(this, "添加悬浮球失败: ${e.message}", Toast.LENGTH_LONG).show()
+            Log.e(TAG, "显示悬浮球失败", e)
         }
     }
 
-    private fun removeBall() {
-        floatingView?.let {
+    private fun hideBall() {
+        floatingBall?.let {
             try {
                 windowManager.removeView(it)
             } catch (e: Exception) {
-                Log.e(TAG, "移除失败", e)
+                Log.e(TAG, "移除悬浮球失败", e)
             }
         }
-        floatingView = null
+        floatingBall = null
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "测试悬浮球",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
+            val channel = NotificationChannel(CHANNEL_ID, "焊工助手", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
     private fun createNotification(): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("测试悬浮球")
-            .setContentText("运行中...")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("焊工助手运行中")
+            .setSmallIcon(R.drawable.ic_float_ball)
             .build()
     }
 }
