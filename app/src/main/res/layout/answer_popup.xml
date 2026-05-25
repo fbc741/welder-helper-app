@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_answer_popup"
+    android:padding="16dp"
+    android:layout_margin="24dp">
+
+    <!-- 关闭按钮 -->
+    <ImageButton
+        android:id="@+id/btnClose"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="end"
+        android:src="@android:drawable/ic_menu_close_clear_cancel"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="关闭" />
+
+    <!-- 题目 -->
+    <TextView
+        android:id="@+id/tvQuestion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="题目内容"
+        android:textSize="16sp"
+        android:textColor="#333333"
+        android:textStyle="bold"
+        android:layout_marginBottom="12dp" />
+
+    <!-- 答案 -->
+    <TextView
+        android:id="@+id/tvAnswer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="答案：A"
+        android:textSize="18sp"
+        android:textColor="#FF4444"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <!-- 解析 -->
+    <TextView
+        android:id="@+id/tvExplain"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="解析"
+        android:textSize="14sp"
+        android:textColor="#666666" />
+
+</LinearLayout>
