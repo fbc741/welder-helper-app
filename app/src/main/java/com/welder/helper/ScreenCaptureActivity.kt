@@ -7,38 +7,22 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 
 /**
- * 透明Activity，用于请求屏幕截取权限
+ * 截屏权限请求Activity
  */
 class ScreenCaptureActivity : Activity() {
 
-    companion object {
-        const val REQUEST_MEDIA_PROJECTION = 1001
-        var resultCode: Int = Activity.RESULT_CANCELED
-        var resultData: Intent? = null
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestScreenCapture()
-    }
 
-    private fun requestScreenCapture() {
-        val mediaProjectionManager =
-            getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        startActivityForResult(
-            mediaProjectionManager.createScreenCaptureIntent(),
-            REQUEST_MEDIA_PROJECTION
-        )
+        val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        startActivityForResult(pm.createScreenCaptureIntent(), 1001)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_MEDIA_PROJECTION) {
-            ScreenCaptureActivity.resultCode = resultCode
-            ScreenCaptureActivity.resultData = data
-            // 通知服务可以开始截屏
-            FloatingService.onScreenCaptureReady?.invoke(resultCode, data)
-        }
+
+        // 把结果传给 SimpleFloatingService
+        SimpleFloatingService.instance?.onCapturePermission(resultCode, data)
         finish()
     }
 }
