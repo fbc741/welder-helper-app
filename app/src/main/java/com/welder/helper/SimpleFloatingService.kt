@@ -9,10 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
@@ -27,6 +24,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.*
 import android.widget.*
+import androidx.appcompat.app.AlertDialog
 import androidx.core.app.NotificationCompat
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -34,10 +32,12 @@ import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import kotlinx.coroutines.*
 
 /**
- * 悬浮窗服务 v3
- * - 不自动截屏，避免闪退
- * - 点击悬浮球时临时截屏+OCR
- * - 答案以简单Toast显示
+ * 悬浮窗服务 v4
+ * 改进：
+ * - 点击悬浮球截屏+OCR识题
+ * - OCR失败后可手动输入题目
+ * - 答案弹窗显示更清晰
+ * - 本地题库200题 + 联网搜题三引擎
  */
 class SimpleFloatingService : Service() {
 
@@ -47,8 +47,6 @@ class SimpleFloatingService : Service() {
         const val NOTIFICATION_ID = 2001
         const val ACTION_START = "com.welder.helper.START_SIMPLE"
         const val ACTION_STOP = "com.welder.helper.STOP_SIMPLE"
-        const val ACTION_SCREENSHOT = "com.welder.helper.SCREENSHOT"
-        const val REQUEST_CODE_SCREENSHOT = 2002
 
         var instance: SimpleFloatingService? = null
             private set
@@ -58,7 +56,6 @@ class SimpleFloatingService : Service() {
     private var floatingBall: View? = null
     private var answerView: View? = null
 
-    // 屏幕参数
     private var screenWidth = 1080
     private var screenHeight = 1920
     private var screenDensity = 1
@@ -76,7 +73,6 @@ class SimpleFloatingService : Service() {
     private lateinit var questionBank: QuestionBank
     private lateinit var onlineSearcher: OnlineSearcher
 
-    // 协程
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val handler = Handler(Looper.getMainLooper())
 
@@ -97,7 +93,6 @@ class SimpleFloatingService : Service() {
         screenDensity = metrics.densityDpi
 
         Log.d(TAG, "服务创建 - ${screenWidth}x${screenHeight}")
-
         createNotificationChannel()
     }
 
@@ -132,7 +127,6 @@ class SimpleFloatingService : Service() {
             return
         }
 
-        // 用代码创建，不依赖XML
         val size = dp2px(60)
         val ball = ImageView(this).apply {
             setImageResource(R.drawable.ic_float_ball)
@@ -164,9 +158,11 @@ class SimpleFloatingService : Service() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if ((e.rawX - startTouchX).let { it * it } + (e.rawY - startTouchY).let { it * it } > 100) dragged = true
-                    params.x = startX + (e.rawX - startTouchX).toInt()
-                    params.y = startY + (e.rawY - startTouchY).toInt()
+                    val dx = e.rawX - startTouchX
+                    val dy = e.rawY - startTouchY
+                    if (dx * dx + dy * dy > 100) dragged = true
+                    params.x = startX + dx.toInt()
+                    params.y = startY + dy.toInt()
                     try { windowManager.updateViewLayout(ball, params) } catch (_: Exception) {}
                     true
                 }
@@ -209,15 +205,113 @@ class SimpleFloatingService : Service() {
 
     private fun onBallClick() {
         Log.d(TAG, "点击悬浮球")
-        toast("截屏中...")
 
-        // 申请截屏权限（只需一次）
-        if (mediaProjection == null) {
-            requestScreenCapture()
-        } else {
+        // 先尝试截屏OCR
+        if (mediaProjection != null) {
             doCapture()
+        } else {
+            // 没有截屏权限，提示用户
+            toast("请先允许截屏权限")
+            requestScreenCapture()
         }
     }
+
+    private fun doCapture() {
+        if (isCapturing) return
+        isCapturing = true
+
+        serviceScope.launch {
+            delay(300)
+            val bitmap = captureScreen()
+            if (bitmap == null) {
+                toast("截屏失败")
+                isCapturing = false
+                return@launch
+            }
+
+            val text = performOCR(bitmap)
+            bitmap.recycle()
+
+            if (text.isNullOrBlank()) {
+                showManualInputDialog()
+                isCapturing = false
+                return@launch
+            }
+
+            Log.d(TAG, "OCR结果: ${text.take(80)}")
+
+            // 搜题
+            val answer = questionBank.findAnswer(text) ?: onlineSearcher.search(text)
+
+            if (answer != null) {
+                showAnswerOverlay(answer)
+            } else {
+                // 搜不到，显示手动输入对话框
+                showManualInputDialog(text)
+            }
+
+            isCapturing = false
+        }
+    }
+
+    // ==================== 手动输入题目 ====================
+
+    private fun showManualInputDialog(ocrText: String? = null) {
+        val input = EditText(this).apply {
+            hint = "请输入题目关键词..."
+            setText(ocrText?.take(50))
+            setSelection(text.length)
+            textSize = 16f
+            minLines = 2
+            maxLines = 4
+        }
+
+        // 用Activity来显示对话框（Service中不能直接弹Dialog）
+        serviceScope.launch(Dispatchers.Main) {
+            try {
+                val dialog = AlertDialog.Builder(this@SimpleFloatingService)
+                    .setTitle("📝 手动搜题")
+                    .setMessage("OCR未识别到题目或未找到答案，请输入题目关键词搜索")
+                    .setView(input)
+                    .setPositiveButton("搜索") { _, _ ->
+                        val searchText = input.text.toString().trim()
+                        if (searchText.isNotEmpty()) {
+                            searchAndShow(searchText)
+                        } else {
+                            toast("请输入题目")
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .create()
+
+                dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+                dialog.show()
+
+                // 10秒后自动关闭
+                handler.postDelayed({ dialog.dismiss() }, 10000)
+            } catch (e: Exception) {
+                Log.e(TAG, "显示手动输入对话框失败", e)
+                toast("未找到答案")
+            }
+        }
+    }
+
+    private fun searchAndShow(searchText: String) {
+        toast("搜索中...")
+        serviceScope.launch {
+            val answer = withContext(Dispatchers.IO) {
+                questionBank.findAnswer(searchText) ?: onlineSearcher.search(searchText)
+            }
+
+            if (answer != null) {
+                showAnswerOverlay(answer)
+            } else {
+                toast("未找到答案，请尝试其他关键词")
+            }
+        }
+    }
+
+    // ==================== 截屏 ====================
 
     private fun requestScreenCapture() {
         val intent = Intent(this, ScreenCaptureActivity::class.java)
@@ -225,13 +319,12 @@ class SimpleFloatingService : Service() {
         startActivity(intent)
     }
 
-    // 从 ScreenCaptureActivity 调用
     fun onCapturePermission(resultCode: Int, data: Intent?) {
         if (resultCode == Activity.RESULT_OK && data != null) {
             val pm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = pm.getMediaProjection(resultCode, data)
             setupImageReader()
-            doCapture()
+            toast("截屏权限已获取，点击悬浮球识题")
         } else {
             toast("截屏权限被拒绝")
         }
@@ -246,44 +339,6 @@ class SimpleFloatingService : Service() {
         )
     }
 
-    private fun doCapture() {
-        if (isCapturing) return
-        isCapturing = true
-
-        serviceScope.launch {
-            delay(300)  // 等悬浮球收起
-            val bitmap = captureScreen()
-            if (bitmap == null) {
-                toast("截屏失败")
-                isCapturing = false
-                return@launch
-            }
-
-            // OCR
-            val text = performOCR(bitmap)
-            bitmap.recycle()
-
-            if (text.isNullOrBlank()) {
-                toast("未识别到文字")
-                isCapturing = false
-                return@launch
-            }
-
-            Log.d(TAG, "OCR结果: ${text.take(50)}")
-
-            // 搜题
-            val answer = questionBank.findAnswer(text) ?: onlineSearcher.search(text)
-
-            if (answer != null) {
-                showAnswerOverlay(answer)
-            } else {
-                toast("未找到答案")
-            }
-
-            isCapturing = false
-        }
-    }
-
     private fun captureScreen(): Bitmap? {
         val image = imageReader?.acquireLatestImage() ?: return null
         return try {
@@ -294,7 +349,6 @@ class SimpleFloatingService : Service() {
             val pad = row - px * screenWidth
             val bmp = Bitmap.createBitmap(screenWidth + pad / px, screenHeight, Bitmap.Config.ARGB_8888)
             bmp.copyPixelsFromBuffer(buf)
-            // 裁剪到屏幕大小
             Bitmap.createBitmap(bmp, 0, 0, screenWidth, screenHeight)
         } catch (e: Exception) {
             Log.e(TAG, "截屏失败", e)
@@ -309,7 +363,10 @@ class SimpleFloatingService : Service() {
             val img = InputImage.fromBitmap(bmp, 0)
             textRecognizer.process(img)
                 .addOnSuccessListener { cont.resume(it.text) {} }
-                .addOnFailureListener { cont.resume(null) {} }
+                .addOnFailureListener { e ->
+                    Log.e(TAG, "OCR失败", e)
+                    cont.resume(null) {}
+                }
         }
     }
 
@@ -321,31 +378,43 @@ class SimpleFloatingService : Service() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xF0FFFFFF.toInt())
-            setPadding(dp2px(16), dp2px(12), dp2px(16), dp2px(12))
+            setPadding(dp2px(20), dp2px(16), dp2px(20), dp2px(16))
+        }
+
+        // 题目（截断显示）
+        val displayQuestion = if (answer.question.length > 50) {
+            answer.question.substring(0, 50) + "..."
+        } else {
+            answer.question
         }
 
         val tvTitle = TextView(this).apply {
-            text = "📝 ${answer.question.take(40)}..."
+            text = "📝 $displayQuestion"
             textSize = 13f
             setTextColor(0xFF666666.toInt())
         }
 
+        // 答案（大字醒目）
         val tvAnswer = TextView(this).apply {
             text = "✅ 答案：${answer.answer}"
-            textSize = 20f
+            textSize = 24f
             setTextColor(0xFFFF4444.toInt())
-            setPadding(0, dp2px(8), 0, dp2px(4))
+            setPadding(0, dp2px(12), 0, dp2px(8))
+            setTypeface(null, android.graphics.Typeface.BOLD)
         }
 
+        // 解析
         val tvExplain = TextView(this).apply {
             text = answer.explain ?: ""
-            textSize = 12f
+            textSize = 14f
             setTextColor(0xFF888888.toInt())
+            setPadding(0, dp2px(4), 0, dp2px(8))
         }
 
+        // 关闭按钮
         val btnClose = Button(this).apply {
             text = "关闭"
-            textSize = 12f
+            textSize = 14f
             setOnClickListener { removeAnswerView() }
         }
 
@@ -355,10 +424,10 @@ class SimpleFloatingService : Service() {
         container.addView(btnClose)
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT.dp2pxMinusPadding(),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.CENTER }
 
@@ -402,6 +471,7 @@ class SimpleFloatingService : Service() {
     }
 
     private fun dp2px(dp: Int) = (dp * resources.displayMetrics.density + 0.5f).toInt()
+    private fun Int.dp2pxMinusPadding() = (this * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun toast(msg: String) {
         handler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
